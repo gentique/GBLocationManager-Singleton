@@ -9,76 +9,87 @@
 import Foundation
 import CoreLocation
 
-protocol GBLocationManagerDelegate {
-    func didUpdateLocation(location: CLLocation)
+protocol GBLocationManagerDelegate: AnyObject {
+    func didUpdateLocation(location: CLLocation?)
     func didFailWith(error: Error)
     func authorizationStatusChanged(status: CLAuthorizationStatus)
 }
 
-final class GBLocationManager: NSObject, CLLocationManagerDelegate{
-    typealias LocationClosure = (_ success: Bool,_ location: CLLocation?) -> Void
+extension GBLocationManagerDelegate {
+    func didUpdateLocation(location: CLLocation?) {}
+    func didFailWith(error: Error) {}
+    func authorizationStatusChanged(status: CLAuthorizationStatus) {}
+}
 
-    //MARK: - GBLocationManager Singleton
+final class GBLocationManager: NSObject, CLLocationManagerDelegate {
+    typealias LocationClosure = (_ success: Bool, _ location: CLLocation?) -> Void
+
+    // MARK: - GBLocationManager Singleton
     static let shared = GBLocationManager()
-    
-    //MARK: - Public variables
+
+    // MARK: - Public variables
     private(set) var currentLocation: CLLocation?
     private(set) var currentLocatioCoordinate: CLLocationCoordinate2D?
-    var authorizationStatus: CLAuthorizationStatus{
-        get{
-            CLLocationManager.authorizationStatus()
-        }
-    }
+    var authorizationStatus: CLAuthorizationStatus = CLLocationManager.authorizationStatus()
+
     var isAuthorized: Bool {
         switch authorizationStatus {
         case .notDetermined,
-         .restricted,
-             .denied:
+                .restricted,
+                .denied:
             return false
         case .authorizedAlways,
-             .authorizedWhenInUse:
+                .authorizedWhenInUse:
             return true
         @unknown default:
             return false
         }
     }
-    var delegate: GBLocationManagerDelegate?
-    
-    //MARK: - Private variables
+
+    weak var delegate: GBLocationManagerDelegate?
+
+    // MARK: - Private variables
     private let locationManager: CLLocationManager = {
         $0.desiredAccuracy = kCLLocationAccuracyBest
         $0.distanceFilter = 0
-        $0.requestWhenInUseAuthorization()
-        
         return $0
     }(CLLocationManager())
     private var timer: Timer?
-    
-    //MARK: - init
+
+    // MARK: - init
     private override init() {
         super.init()
         locationManager.delegate = self
         currentLocation = locationManager.location
     }
-    
-    //MARK: - deinit
+
+    // MARK: - deinit
     deinit {
         locationManager.delegate = nil
         delegate = nil
         timer?.invalidate()
     }
-    
-    //MARK: - Public Methods
-    func locationServices(shouldUpdate: Bool){
+
+    // MARK: - Public Methods
+
+    func requestAlwaysAuthorization() {
+        locationManager.requestAlwaysAuthorization()
+    }
+
+    func requestWhenInUseAuthorization() {
+        locationManager.requestWhenInUseAuthorization()
+    }
+
+    func locationServices(shouldUpdate: Bool) {
         shouldUpdate ? locationManager.startUpdatingLocation() : locationManager.stopUpdatingLocation()
     }
-    
-    func requestLocationUpdate(completion: @escaping LocationClosure){
+
+    func requestLocationUpdate(completion: @escaping LocationClosure) {
         locationManager.startUpdatingLocation()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { (timer) in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
             let hasLocation = (self.currentLocation != nil)
 
-            if !hasLocation{
+            if !hasLocation {
                 return
             }
             self.locationServices(shouldUpdate: !hasLocation)
@@ -86,56 +97,58 @@ final class GBLocationManager: NSObject, CLLocationManagerDelegate{
             timer.invalidate()
         }
     }
-    
-    ///This method requests for authorization when status is notDetermined. If it's declined then it posts a notification. If authorized then it does a locationRequest.
-    func checkAuthorization(){
-        CLLocationManager.authorizationStatus()
-        
-        switch authorizationStatus {
-        case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
-        case .restricted,
-             .denied:
-            //show alert that app needs authorization.
-        case .authorizedAlways,
-             .authorizedWhenInUse:
-            requestLocation()
-        @unknown default:
-            break
-        }
+
+    func requestLocation() {
+        locationManager.requestLocation()
     }
-    //MARK: - CLLocationManagerDelegate Stubs
+
+    /// This method requests for authorization when status is notDetermined. If it's declined then it posts a notification. If authorized then it does a locationRequest.
+    func checkAuthorization() {
+        if authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse {
+            requestLocation()
+        } else {
+            print("Location IS NO AUTHORIZED with status: \(authorizationStatus.rawValue)")
+        }
+
+        postDelegateauthorizationStatusChanged()
+    }
+
+    // MARK: - CLLocationManagerDelegate Stubs
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        authorizationStatus = status
         checkAuthorization()
     }
-    
+
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last, location.horizontalAccuracy >= 0, location.verticalAccuracy >= 0 else {
+        guard let location = locations.last else {
             return
         }
+
         currentLocation = location
         currentLocatioCoordinate = location.coordinate
-        postDelegateUpdateWith(location: currentLocation!)
+        postDelegateUpdateWith(location: location)
     }
-    
+
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         postDelegateUpdateWith(error: error)
     }
-    
-    //MARK: - Internal Methods
-    private func postDelegateUpdateWith(location: CLLocation){
-        guard let delegate = self.delegate else {return}
-        
+
+    // MARK: - Internal Methods
+    private func postDelegateUpdateWith(location: CLLocation) {
+        guard let delegate = self.delegate else { return }
+
         delegate.didUpdateLocation(location: location)
     }
-    
-    private func postDelegateUpdateWith(error: Error){
-        guard let delegate = self.delegate else {return}
-        
+
+    private func postDelegateUpdateWith(error: Error) {
+        guard let delegate = self.delegate else { return }
+
         delegate.didFailWith(error: error)
     }
-    
-    private func requestLocation(){
-        locationManager.requestLocation()
+
+    private func postDelegateauthorizationStatusChanged() {
+        guard let delegate = self.delegate else { return }
+
+        delegate.authorizationStatusChanged(status: authorizationStatus)
     }
 }
